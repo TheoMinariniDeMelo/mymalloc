@@ -1,44 +1,64 @@
+#include <assert.h>
 #include <stddef.h>
 #include <unistd.h>
 #include <stdbool.h>
+#define BLOCK_SIZE sizeof(BlockMeta)
 
-struct Block{
-	struct Block *next_block;
+struct BlockMeta{
+	struct BlockMeta *next;
 	size_t size;
 	bool free;
 };
 
-typedef struct Block Block;
+typedef struct BlockMeta BlockMeta;
 
-Block* global_block = NULL;
+BlockMeta* global_block = NULL;
 
-void* initiate_block(){
-	void* base = sbrk(0);
-	void* r = sbrk(sizeof(Block));
-	if(base != r || r == (void*) - 1){
-		return (void*) - 1;
+BlockMeta* request_space(BlockMeta* last, size_t size){
+	BlockMeta* block = sbrk(0);
+	void* request = sbrk(size + BLOCK_SIZE);
+	if(request != block){
+		return NULL;
 	}
-	return r;
+	if(last){
+		last->next = block;
+	}
+	block->next = NULL;
+	block->size = size;
+	block->free = false;
+	return block;
 }
 
-void* mallocd(int size){
-	void* base = sbrk(0);
-	void* new_base = sbrk(size);
-	if(global_block == NULL){
-		void* r =initiate_block();	
-		if(r == (void*) - 1){
-			return (void*) - 1;
+BlockMeta* find_free_block(BlockMeta **last, size_t size){
+	BlockMeta* current = *last;
+	while(current && !(current->free && current->size >= size)){
+		*last = current;
+		current = current->next;
+	}
+	return current;
+}
+
+void* malloc(size_t size){
+	BlockMeta* block = NULL;
+	if(size <= 0) return NULL;
+	if(!global_block){
+		block = request_space(NULL, size);
+		if(!block) return NULL;
+		global_block = block;
+	}else{
+		block = find_free_block(&global_block, size);
+		if(block == NULL){
+			block = request_space(global_block, size);
+			if(block == NULL) return NULL;
+		}else{
+			block->free = 0;
 		}
-		global_block = (Block*) r;
 	}
-	void * r = initiate_block();
-	if(r == (void*) - 1) return (void*) - 1;
-	global_block->next_block = (Block*) r;
-	global_block->size = size;
-	global_block->free = 0;
-	global_block = global_block->next_block;
-	return global_block;
+	return (block + 1);
 }
-void* realloc(void* ptr, size_t size){
-
+void free(void* ptr){
+	if(!ptr) return;
+	BlockMeta* block = (BlockMeta*) ptr - 1;
+	assert(block->free == false);
+	block->free = 1;
 }
